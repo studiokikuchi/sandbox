@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Refraction | Tilt Water</title>
+<style>
+  :root{ --bg:#071225; --neon:#D7FF55; }
+  html,body{
+    margin:0; height:100%; overflow:hidden;
+    background:var(--bg);
+    touch-action:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none;
+    font-family:system-ui,-apple-system,sans-serif;
+  }
+  canvas{display:block; width:100%; height:100%;}
+  .gate{
+    position:fixed; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:14px;
+    background:rgba(7,18,37,0.92);
+    color:var(--neon);
+    z-index:10;
+    text-align:center;
+    padding:24px;
+  }
+  .btn{
+    background:transparent;
+    border:1px solid var(--neon);
+    color:var(--neon);
+    padding:12px 18px;
+    border-radius:999px;
+    letter-spacing:0.08em;
+    font-size:14px;
+  }
+  .sub{ opacity:.7; font-size:12px; line-height:1.6; max-width:34em; }
+  .hud{
+    position:fixed; left:12px; bottom:10px;
+    color:rgba(215,255,85,0.35);
+    font-size:12px; z-index:5; pointer-events:none;
+    white-space:pre;
+  }
+</style>
+</head>
+<body>
+
+<div class="gate" id="gate">
+  <div>Refraction</div>
+  <button class="btn" id="start">ENTER</button>
+  <div class="sub">
+    カメラ＋傾きで水面屈折。<br>
+    iPhoneは「カメラ」と「モーション/方向」の許可が必要です。
+  </div>
+</div>
+
+<video id="v" playsinline muted autoplay style="display:none;"></video>
+<canvas id="c"></canvas>
+<div class="hud" id="hud"></div>
+
+<script>
+(() => {
+  const video = document.getElementById('v');
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', { alpha: false });
+  const gate = document.getElementById('gate');
+  const hud  = document.getElementById('hud');
+
+  let w=0,h=0,dpr=1;
+  function resize(){
+    dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    w = canvas.width  = Math.floor(innerWidth  * dpr);
+    h = canvas.height = Math.floor(innerHeight * dpr);
+    canvas.style.width  = innerWidth  + "px";
+    canvas.style.height = innerHeight + "px";
+  }
+  addEventListener('resize', resize, {passive:true});
+  resize();
+
+  // ---- sensor (tilt) ----
+  let beta=0, gamma=0;     // raw
+  let sb=0, sg=0;          // smoothed
+  const SMOOTH = 0.12;     // 小さいほどヌルい（0.08〜0.18）
+
+  function onOri(e){
+    beta  = (e.beta  ?? 0);
+    gamma = (e.gamma ?? 0);
+  }
+
+  // ---- camera ----
+  async function startCamera(){
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" },
+      audio: false
+    });
+    video.srcObject = stream;
+    await video.play();
+  }
+
+  async function requestMotion(){
+    // iOS permission gate
+    if (typeof DeviceOrientationEvent !== "undefined" &&
+        typeof DeviceOrientationEvent.requestPermission === "function") {
+      const res = await DeviceOrientationEvent.requestPermission();
+      if(res !== "granted") throw new Error("motion permission denied");
+    }
+    addEventListener("deviceorientation", onOri, {passive:true});
+  }
+
+  // ---- refraction params ----
+  // “水面”の気持ちよさはここ
+  const GRID = 28;               // 小さいほど重い / 大きいほど粗い（24〜36）
+  const BASE_STRENGTH = 22;      // 歪みの基本強さ（px相当、dprで増減）
+  const TILT_STRENGTH = 0.9;     // 傾きで増える量
+  const WAVE_SPEED = 0.85;       // 波の進む速さ
+  const WAVE_SCALE = 0.018;      // 波の密度
+  const WAVE_AMOUNT = 0.55;      // 波の影響量
+
+  function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
+
+  // 1枚の映像を「小さなタイル」に分けて、タイルごとにソース座標をズラして描く
+  // → ピクセル単位より軽く、十分“水面感”が出る
+  function drawRefraction(t){
+    // videoのアスペクトに合わせて「cover」で引き伸ばして描く下準備
+    const vw = video.videoWidth || 1280;
+    const vh = video.videoHeight || 720;
+    const scale = Math.max(w / vw, h / vh);
+    const dw = vw * scale;
+    const dh = vh * scale;
+    const ox = (w - dw) * 0.5;
+    const oy = (h - dh) * 0.5;
+
+    // 傾きの平滑化
+    sb += (beta  - sb) * SMOOTH;
+    sg += (gamma - sg) * SMOOTH;
+
+    // 傾き→歪み方向（連続）
+    // gamma: 左右, beta: 前後。符号は感覚優先で決めてOK
+    const nx = clamp(sg / 45, -1, 1);  // -1..1
+    const ny = clamp(sb / 45, -1, 1);
+
+    const strength = (BASE_STRENGTH * dpr) * (0.55 + TILT_STRENGTH * (Math.hypot(nx,ny)));
+    const dirx = nx * strength;
+    const diry = ny * strength;
+
+    // ベース描画（薄く暗いフィルター）
+    ctx.fillStyle = "#071225";
+    ctx.fillRect(0,0,w,h);
+
+    const step = GRID * dpr;
+    for(let y=0; y<h; y+=step){
+      for(let x=0; x<w; x+=step){
+        const u = x / w;
+        const v = y / h;
+
+        // 波（時間＋位置）
+        const wave =
+          Math.sin((u*120 + t*WAVE_SPEED) * WAVE_SCALE*1000) * 0.6 +
+          Math.sin((v*120 - t*WAVE_SPEED*0.8) * WAVE_SCALE*1000) * 0.4;
+
+        // 水面の“流れ” = 傾き方向 + 波ノイズ
+        const offx = dirx + (wave * WAVE_AMOUNT * strength);
+        const offy = diry + (wave * WAVE_AMOUNT * strength);
+
+        // ソース座標（画面→video座標）
+        // coverオフセットを考慮
+        const sx = ((x + offx) - ox) / scale;
+        const sy = ((y + offy) - oy) / scale;
+
+        // タイルサイズ（画面上）
+        const tw = Math.min(step, w - x);
+        const th = Math.min(step, h - y);
+
+        // 対応するソースサイズ（video上）
+        const sw = tw / scale;
+        const sh = th / scale;
+
+        ctx.drawImage(video, sx, sy, sw, sh, x, y, tw, th);
+      }
+    }
+
+    // ほんの少しビネット（暗闇を保つ）
+    const g = ctx.createRadialGradient(w/2,h/2, Math.min(w,h)*0.15, w/2,h/2, Math.max(w,h)*0.75);
+    g.addColorStop(0, "rgba(7,18,37,0)");
+    g.addColorStop(1, "rgba(7,18,37,0.55)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,w,h);
+
+    hud.textContent = `beta:${sb.toFixed(1)}  gamma:${sg.toFixed(1)}  grid:${GRID}`;
+  }
+
+  function loop(ts){
+    drawRefraction(ts/1000);
+    requestAnimationFrame(loop);
+  }
+
+  async function start(){
+    try{
+      await startCamera();
+      await requestMotion();
+      gate.style.display = "none";
+      requestAnimationFrame(loop);
+    }catch(err){
+      // 許可が出ない等のときはメッセージを残す
+      hud.textContent = "permission/camera error";
+      console.error(err);
+    }
+  }
+
+  document.getElementById('start').addEventListener('click', start);
+})();
+</script>
+</body>
+</html>

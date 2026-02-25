@@ -1,1 +1,264 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Presence | Compass Six Lights</title>
+<style>
+  :root{ --bg:#071225; --neon:#D7FF55; }
+  html,body{
+    margin:0; height:100%; overflow:hidden;
+    background:var(--bg);
+    touch-action:none;
+    -webkit-user-select:none; user-select:none;
+    -webkit-touch-callout:none;
+    font-family:system-ui,-apple-system,sans-serif;
+  }
+  canvas{display:block; width:100%; height:100%;}
+  .gate{
+    position:fixed; inset:0;
+    display:flex; flex-direction:column;
+    align-items:center; justify-content:center;
+    gap:14px;
+    background:rgba(7,18,37,0.90);
+    color:var(--neon);
+    z-index:10;
+    text-align:center;
+    padding:24px;
+  }
+  .btn{
+    background:transparent;
+    border:1px solid var(--neon);
+    color:var(--neon);
+    padding:12px 18px;
+    border-radius:999px;
+    letter-spacing:0.08em;
+    font-size:14px;
+  }
+  .sub{
+    opacity:.68;
+    font-size:12px;
+    line-height:1.5;
+    max-width:32em;
+  }
+  .hud{
+    position:fixed;
+    left:12px; bottom:10px;
+    color:rgba(215,255,85,0.40);
+    font-size:12px;
+    z-index:5;
+    pointer-events:none;
+    white-space:pre;
+  }
+</style>
+</head>
+<body>
 
+<div class="gate" id="gate">
+  <div>Presence</div>
+  <button class="btn" id="start">ENTER</button>
+  <div class="sub" id="sub">
+    方位（コンパス）＋傾きで、光が現実空間に固定されます。<br>
+    iPhoneは許可が必要。磁気の影響が少ない場所で試してください。
+  </div>
+</div>
+
+<canvas id="c"></canvas>
+<div class="hud" id="hud"></div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d', {alpha:true});
+
+  let w=0,h=0,dpr=1;
+  function resize(){
+    dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+    w = canvas.width  = Math.floor(innerWidth  * dpr);
+    h = canvas.height = Math.floor(innerHeight * dpr);
+    canvas.style.width  = innerWidth  + "px";
+    canvas.style.height = innerHeight + "px";
+  }
+  addEventListener('resize', resize, {passive:true});
+  resize();
+
+  const hud = document.getElementById('hud');
+  const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+  if(!isMobile){
+    document.getElementById('sub').innerHTML =
+      "このページはスマホ向けです。<br>スマホで開くとコンパス＋傾きで光が固定されます。";
+  }
+
+  // ---- 6 lights fixed in the real world ----
+  // World axes:
+  //   +Y = North, -Y = South
+  //   +X = East,  -X = West
+  //   +Z = Up,    -Z = Down
+  const lights = [
+    { name:"EAST",  dir:[ 1, 0, 0], rgb:[255,  60,  60] }, // 赤（右=東）
+    { name:"WEST",  dir:[-1, 0, 0], rgb:[ 80, 120, 255] }, // 青（左=西）
+    { name:"NORTH", dir:[ 0, 1, 0], rgb:[255,  80, 180] }, // ピンク（前=北）
+    { name:"SOUTH", dir:[ 0,-1, 0], rgb:[255, 150,  50] }, // オレンジ（後=南）
+    { name:"UP",    dir:[ 0, 0, 1], rgb:[ 80, 255, 120] }, // 緑（上）
+    { name:"DOWN",  dir:[ 0, 0,-1], rgb:[215, 255,  85] }, // 黄緑（下/フラット）
+  ];
+
+  const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
+  const norm = (v)=>{
+    const len = Math.hypot(v[0],v[1],v[2]) || 1;
+    return [v[0]/len, v[1]/len, v[2]/len];
+  };
+  const dot = (a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+
+  // Projection: each light is a separate object "around you"
+  const R  = () => Math.min(w,h) * 0.34;
+  const RZ = () => Math.min(w,h) * 0.24;
+  const CORE = () => 14 * dpr;
+  const FALL = () => 340 * dpr;
+
+  function projectCenter(dir){
+    const cx=w/2, cy=h/2;
+    const sx = cx + dir[0]*R();
+    const sy = cy - dir[1]*R() - dir[2]*RZ();
+    return [sx,sy];
+  }
+
+  function drawLight(x,y,rgb,intensity){
+    const a0 = 0.95 * intensity;
+    const a1 = 0.35 * intensity;
+
+    const g = ctx.createRadialGradient(x,y,CORE(), x,y,FALL());
+    g.addColorStop(0,    `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a0})`);
+    g.addColorStop(0.28, `rgba(${rgb[0]},${rgb[1]},${rgb[2]},${a1})`);
+    g.addColorStop(1,    `rgba(7,18,37,0)`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,w,h);
+  }
+
+  function vignette(){
+    const g = ctx.createRadialGradient(w/2,h/2, Math.min(w,h)*0.10, w/2,h/2, Math.max(w,h)*0.72);
+    g.addColorStop(0, "rgba(7,18,37,0)");
+    g.addColorStop(1, "rgba(7,18,37,0.62)");
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,w,h);
+  }
+
+  // ---- Sensor state ----
+  // heading: 0..360 (0=N, 90=E)
+  let headingDeg = 0;
+  // pitch: look up/down. We'll derive from beta.
+  let betaDeg = 0;
+
+  // light smoothing but keep direct feel
+  let sh=0, sb=0;
+  const SMOOTH = 0.18;
+
+  // If iOS provides webkitCompassHeading, use it (more "true compass")
+  let compassSource = "alpha";
+
+  function onOrientation(e){
+    betaDeg = e.beta ?? 0;
+
+    // iOS Safari sometimes provides this:
+    if (typeof e.webkitCompassHeading === "number") {
+      headingDeg = e.webkitCompassHeading; // 0=N
+      compassSource = "webkit";
+    } else {
+      // alpha is 0..360, but can be relative on some devices/browsers.
+      // Use it as fallback.
+      const a = e.alpha ?? 0;
+      headingDeg = a; // treat as heading-like
+      compassSource = "alpha";
+    }
+  }
+
+  // Convert heading + pitch into a world-space view vector
+  // - heading: yaw around Z (up axis)
+  // - pitch: derived from beta (forward/back tilt)
+  //
+  // Convention:
+  // heading 0 -> facing North (+Y)
+  // heading 90 -> facing East (+X)
+  // pitch 0 -> horizontal
+  // pitch positive -> tilt forward (look down a bit)
+  // We'll map pitch so that looking up increases +Z.
+  function viewVectorWorld(){
+    // Smooth
+    sh += (((headingDeg - sh + 540) % 360) - 180) * SMOOTH; // wrap-aware smoothing
+    sb += (betaDeg - sb) * SMOOTH;
+
+    const yaw = (sh * Math.PI) / 180;
+
+    // pitch: clamp to avoid flipping weirdness
+    // beta around 0..90 when upright; we just want gentle effect.
+    const pitch = clamp(-sb, -90, 90) * Math.PI / 180; // negative beta -> look up
+
+    // Forward vector in world coords:
+    // horizontal forward:
+    const fx = Math.sin(yaw);
+    const fy = Math.cos(yaw);
+
+    // apply pitch: raise/lower Z, reduce horizontal magnitude
+    const cp = Math.cos(pitch);
+    const sp = Math.sin(pitch);
+
+    const vx = fx * cp;
+    const vy = fy * cp;
+    const vz = sp;
+
+    return norm([vx,vy,vz]);
+  }
+
+  // Single-light rule (no mixing)
+  const VIS_THRESHOLD = 0.22; // increase => darker between lights
+
+  function render(){
+    ctx.clearRect(0,0,w,h);
+
+    const view = viewVectorWorld();
+
+    // choose best aligned light
+    let best = lights[0], bestDot=-Infinity;
+    for(const L of lights){
+      const d = dot(view, L.dir);
+      if(d > bestDot){ bestDot=d; best=L; }
+    }
+
+    const vis = clamp((bestDot - VIS_THRESHOLD) / (1 - VIS_THRESHOLD), 0, 1);
+    const intensity = 0.12 + 0.88 * vis;
+
+    const [lx,ly] = projectCenter(best.dir);
+    drawLight(lx,ly,best.rgb,intensity);
+    vignette();
+
+    // HUD (debug)
+    hud.textContent =
+      `heading: ${Math.round(((sh%360)+360)%360)}° (${compassSource})\n`+
+      `beta: ${Math.round(sb)}°\n`+
+      `light: ${best.name}`;
+
+    requestAnimationFrame(render);
+  }
+  render();
+
+  async function startSensors(){
+    try{
+      // iOS permission gate
+      if (typeof DeviceOrientationEvent !== "undefined" &&
+          typeof DeviceOrientationEvent.requestPermission === "function") {
+        const res = await DeviceOrientationEvent.requestPermission();
+        if(res !== "granted") return;
+      }
+      addEventListener("deviceorientation", onOrientation, {passive:true});
+      document.getElementById("gate").style.display="none";
+    }catch(_){
+      // stay on gate if fails
+    }
+  }
+
+  document.getElementById("start").addEventListener("click", startSensors);
+})();
+</script>
+
+</body>
+</html>

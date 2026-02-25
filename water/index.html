@@ -110,12 +110,10 @@
 
   // ---- refraction params ----
   // “水面”の気持ちよさはここ
-  const GRID = 28;               // 小さいほど重い / 大きいほど粗い（24〜36）
-  const BASE_STRENGTH = 22;      // 歪みの基本強さ（px相当、dprで増減）
+  const GRID = 24;               // より細かく
+  const BASE_STRENGTH = 22 * 1.4; // 歪みの基本強度を1.4倍
   const TILT_STRENGTH = 0.9;     // 傾きで増える量
-  const WAVE_SPEED = 0.85;       // 波の進む速さ
-  const WAVE_SCALE = 0.018;      // 波の密度
-  const WAVE_AMOUNT = 0.55;      // 波の影響量
+  // 波パラメータは個別に式内で調整
 
   function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
 
@@ -144,9 +142,12 @@
     const dirx = nx * strength;
     const diry = ny * strength;
 
-    // ベース描画（薄く暗いフィルター）
-    ctx.fillStyle = "#071225";
+    // 残像（粘性表現）
+    ctx.fillStyle = "rgba(7,18,37,0.08)";
     ctx.fillRect(0,0,w,h);
+    // ベース描画（暗い背景を保つ）
+    // ctx.fillStyle = "#071225";
+    // ctx.fillRect(0,0,w,h);
 
     const step = GRID * dpr;
     for(let y=0; y<h; y+=step){
@@ -154,14 +155,14 @@
         const u = x / w;
         const v = y / h;
 
-        // 波（時間＋位置）
-        const wave =
-          Math.sin((u*120 + t*WAVE_SPEED) * WAVE_SCALE*1000) * 0.6 +
-          Math.sin((v*120 - t*WAVE_SPEED*0.8) * WAVE_SCALE*1000) * 0.4;
+        // 2層の波
+        const wave1 = Math.sin((u*80 + t*0.6)*0.02) * 0.8;
+        const wave2 = Math.sin((v*160 - t*1.1)*0.05) * 0.4;
+        const wave = wave1 + wave2;
 
-        // 水面の“流れ” = 傾き方向 + 波ノイズ
-        const offx = dirx + (wave * WAVE_AMOUNT * strength);
-        const offy = diry + (wave * WAVE_AMOUNT * strength);
+        // 傾き方向の流れを強める
+        const offx = dirx * 0.8 + wave * strength * 0.7;
+        const offy = diry * 0.8 + wave * strength * 0.7;
 
         // ソース座標（画面→video座標）
         // coverオフセットを考慮

@@ -212,49 +212,31 @@
 
 
 
-  // ---- 光は常に1つだけ（中心固定）----
-  // 色補間用lerp関数
-  function lerpColor(a, b, t) {
-    return [
-      a[0] + (b[0] - a[0]) * t,
-      a[1] + (b[1] - a[1]) * t,
-      a[2] + (b[2] - a[2]) * t
-    ];
-  }
 
-  // 現在の色状態
-  let currentRGB = [215,255,85]; // 初期値: DOWN
+  // ---- コンセプトB：6つの光が空間に固定 ----
+  // 強度計算の指数パラメータ
+  const INTENSITY_EXP = 1.8; // 調整可能
 
   function render(){
     ctx.clearRect(0,0,w,h);
 
     const view = viewVectorWorld();
 
-    // 方向ごとにdot値を計算し最大の方向を選ぶ
-    let best = lights[0], bestDot = -Infinity;
+    // 6つの光を空間に描画
     for(const L of lights){
-      const d = dot(view, L.dir);
-      if(d > bestDot){ bestDot = d; best = L; }
+      // viewとlight.dirのdot値から強度を計算
+      const v = clamp((dot(view, L.dir) + 1) / 2, 0, 1); // -1～1を0～1へ
+      const intensity = 0.08 + 0.92 * Math.pow(v, INTENSITY_EXP);
+      // projectCenterで位置を得て描画
+      const [lx, ly] = projectCenter(L.dir);
+      drawLight(lx, ly, L.rgb, intensity);
     }
-
-    // ターゲット色へ滑らかに補間（lerp）
-    currentRGB = lerpColor(currentRGB, best.rgb, 0.18); // 補間係数は調整可
-
-    // 光の強さ（正面ほど強い）
-    const VIS_THRESHOLD = 0.22;
-    const vis = clamp((bestDot - VIS_THRESHOLD) / (1 - VIS_THRESHOLD), 0, 1);
-    const intensity = 0.12 + 0.88 * vis;
-
-    // 光は常に画面中心に描画
-    const cx = w/2, cy = h/2;
-    drawLight(cx, cy, currentRGB, intensity);
     vignette();
 
     // HUD（デバッグ情報）
     hud.textContent =
       `heading: ${Math.round(((sh%360)+360)%360)}° (${compassSource})\n`+
-      `beta: ${Math.round(sb)}°\n`+
-      `light: ${best.name}`;
+      `beta: ${Math.round(sb)}°`;
 
     requestAnimationFrame(render);
   }

@@ -217,20 +217,36 @@
   // 強度計算の指数パラメータ
   const INTENSITY_EXP = 1.8; // 調整可能
 
+
   function render(){
     ctx.clearRect(0,0,w,h);
 
     const view = viewVectorWorld();
 
-    // 6つの光を空間に描画
-    for(const L of lights){
-      // viewとlight.dirのdot値から強度を計算
-      const v = clamp((dot(view, L.dir) + 1) / 2, 0, 1); // -1～1を0～1へ
+    // 各光のintensityを計算し配列化
+    const lightIntensities = lights.map(L => {
+      const v = clamp((dot(view, L.dir) + 1) / 2, 0, 1);
       const intensity = 0.08 + 0.92 * Math.pow(v, INTENSITY_EXP);
-      // projectCenterで位置を得て描画
-      const [lx, ly] = projectCenter(L.dir);
-      drawLight(lx, ly, L.rgb, intensity);
+      return {light: L, intensity, v};
+    });
+
+    // intensity降順でソート
+    lightIntensities.sort((a, b) => b.intensity - a.intensity);
+
+    // 上位2つのみ描画（2位が弱い場合は1位のみ）
+    const first = lightIntensities[0];
+    const second = lightIntensities[1];
+
+    // 1位描画
+    const [lx1, ly1] = projectCenter(first.light.dir);
+    drawLight(lx1, ly1, first.light.rgb, first.intensity);
+
+    // 2位が十分強い場合のみ描画
+    if(second && second.intensity >= 0.12){
+      const [lx2, ly2] = projectCenter(second.light.dir);
+      drawLight(lx2, ly2, second.light.rgb, second.intensity);
     }
+
     vignette();
 
     // HUD（デバッグ情報）

@@ -151,6 +151,7 @@
 
   // light smoothing but keep direct feel
   let sh=0, sb=0;
+  // 光の動きを滑らかにするためのスムージング係数
   const SMOOTH = 0.08;
 
   // If iOS provides webkitCompassHeading, use it (more "true compass")
@@ -209,33 +210,57 @@
     return norm([vx,vy,vz]);
   }
 
-  // Single-light rule (no mixing)
-  const VIS_THRESHOLD = 0.22; // increase => darker between lights
+
+  // ---- ヒステリシス＋フェード遷移 ----
+  const SWITCH_MARGIN = 0.10; // 光切り替えの余裕
+  const FADE_SPEED = 0.12;    // フェード速度
+
+  // 光状態管理
+  let currentLight = lights[0];
+  let currentDot = -Infinity;
+  let fade = 1.0; // 0:消灯, 1:点灯
 
   function render(){
     ctx.clearRect(0,0,w,h);
 
     const view = viewVectorWorld();
 
-    // choose best aligned light
-    let best = lights[0], bestDot=-Infinity;
+    // 最も近い光を探索
+    let best = lights[0], bestDot = -Infinity;
     for(const L of lights){
       const d = dot(view, L.dir);
-      if(d > bestDot){ bestDot=d; best=L; }
+      if(d > bestDot){ bestDot = d; best = L; }
     }
 
-    const vis = clamp((bestDot - VIS_THRESHOLD) / (1 - VIS_THRESHOLD), 0, 1);
-    const intensity = 0.12 + 0.88 * vis;
+    // ヒステリシス判定: 現在の光からSWITCH_MARGIN離れたら切り替え
+    if(best !== currentLight && bestDot > currentDot + SWITCH_MARGIN){
+      currentLight = best;
+      currentDot = bestDot;
+      fade = 0.0; // 新しい光へフェードイン開始
+    }else{
+      currentDot = dot(view, currentLight.dir);
+    }
 
-    const [lx,ly] = projectCenter(best.dir);
-    drawLight(lx,ly,best.rgb,intensity);
+    // フェード遷移
+    fade += FADE_SPEED * ((best === currentLight) ? 1 : -1);
+    fade = clamp(fade, 0, 1);
+
+    // 光の強度計算（単体光コンセプト維持）
+    const VIS_THRESHOLD = 0.22;
+    const vis = clamp((currentDot - VIS_THRESHOLD) / (1 - VIS_THRESHOLD), 0, 1);
+    const intensity = (0.12 + 0.88 * vis) * fade;
+
+    // 光描画
+    const [lx,ly] = projectCenter(currentLight.dir);
+    drawLight(lx,ly,currentLight.rgb,intensity);
     vignette();
 
-    // HUD (debug)
+    // HUD（デバッグ情報）
     hud.textContent =
       `heading: ${Math.round(((sh%360)+360)%360)}° (${compassSource})\n`+
       `beta: ${Math.round(sb)}°\n`+
-      `light: ${best.name}`;
+      `light: ${currentLight.name}\n`+
+      `fade: ${fade.toFixed(2)}`;
 
     requestAnimationFrame(render);
   }

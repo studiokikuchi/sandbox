@@ -110,10 +110,11 @@
 
   // ---- refraction params ----
   // “水面”の気持ちよさはここ
-  const GRID = 24;               // より細かく
+  const GRID = 12;               // さらに細かく
   const BASE_STRENGTH = 22 * 1.4; // 歪みの基本強度を1.4倍
   const TILT_STRENGTH = 0.9;     // 傾きで増える量
-  // 波パラメータは個別に式内で調整
+  const WAVE_SCALE = 0.012;      // 波の密度（広く）
+  const WAVE_AMOUNT = 0.35;      // 波の影響量（滑らかに）
 
   function clamp(v,a,b){ return Math.max(a, Math.min(b,v)); }
 
@@ -155,14 +156,14 @@
         const u = x / w;
         const v = y / h;
 
-        // 2層の波
-        const wave1 = Math.sin((u*80 + t*0.6)*0.02) * 0.8;
-        const wave2 = Math.sin((v*160 - t*1.1)*0.05) * 0.4;
+        // 2層の波（WAVE_SCALEで広く）
+        const wave1 = Math.sin((u*80 + t*0.6)*WAVE_SCALE*1000) * 0.8;
+        const wave2 = Math.sin((v*160 - t*1.1)*WAVE_SCALE*2500) * 0.4;
         const wave = wave1 + wave2;
 
-        // 傾き方向の流れを強める
-        const offx = dirx * 0.8 + wave * strength * 0.7;
-        const offy = diry * 0.8 + wave * strength * 0.7;
+        // 傾き方向の流れを強める（WAVE_AMOUNTで滑らかに）
+        const offx = dirx * 0.8 + wave * strength * WAVE_AMOUNT;
+        const offy = diry * 0.8 + wave * strength * WAVE_AMOUNT;
 
         // ソース座標（画面→video座標）
         // coverオフセットを考慮
